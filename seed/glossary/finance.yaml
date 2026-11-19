@@ -1,0 +1,56 @@
+# Finance domain glossary (native import format).
+# Import:  PUT file://seed/glossary/finance.yaml @ONTOLOGY_DB.API.IMPORT_STAGE/seed/
+#          CALL ONTOLOGY_DB.API.IMPORT_GLOSSARY('@ONTOLOGY_DB.API.IMPORT_STAGE/seed/finance.yaml');
+# Everything lands as DRAFT; the Finance steward approves.
+domain: Finance
+concepts:
+  - name: Gross Revenue
+    kind: METRIC
+    definition: Invoiced amount before refunds and discounts, for invoices in Finance reporting scope.
+    synonyms: [gross sales, invoiced revenue]
+    formula: SUM(invoice_amount)
+    formula_provenance: Finance close manual, section 4.1
+  - name: Net Revenue
+    kind: METRIC
+    definition: Recognized revenue after refunds and discounts. Reported in the period the revenue is recognized.
+    synonyms: [net sales, recognized revenue]
+    formula: SUM(invoice_amount) - SUM(refund_amount) - SUM(discount_amount)
+    exclusions: [intercompany invoices, test accounts]
+    formula_provenance: Finance close manual, section 4.2
+  - name: Revenue Recognition Policy
+    kind: POLICY
+    definition: Report revenue in the period it is recognized (recognition date), never by invoice or booking date.
+  - name: Invoice
+    kind: ENTITY
+    definition: A billing document issued to a customer for delivered goods or services.
+  - name: Refund
+    kind: MEASURE
+    definition: Amount returned to a customer against a previously issued invoice.
+  - name: Discount
+    kind: MEASURE
+    definition: Price reduction applied to an invoice line before payment.
+  - name: Customer
+    kind: ENTITY
+    definition: A legal entity that is billed by the company; test accounts and internal entities are not customers for reporting.
+
+relationships:
+  - {source: Gross Revenue, type: DERIVES, target: Net Revenue}
+  - {source: Revenue Recognition Policy, type: APPLIES_TO, target: Net Revenue}
+  - {source: Revenue Recognition Policy, type: APPLIES_TO, target: Gross Revenue}
+  - {source: Refund, type: DERIVES, target: Net Revenue}
+  - {source: Discount, type: DERIVES, target: Net Revenue}
+  - {source: Invoice, type: HAS_PART, target: Discount}
+  - {source: Invoice, type: CUSTOM, label: BILLED_TO, target: Customer}
+
+representations:
+  # Shorthand form (semantic_view + metric) from the product blog is accepted.
+  - concept: Net Revenue
+    semantic_view: ONTOLOGY_DB.SEMANTIC.FINANCE_REVENUE_SV
+    metric: INVOICES.NET_REVENUE
+  - concept: Gross Revenue
+    semantic_view: ONTOLOGY_DB.SEMANTIC.FINANCE_REVENUE_SV
+    metric: INVOICES.GROSS_REVENUE
+  - concept: Invoice
+    type: IMPLEMENTS
+    asset_kind: VIEW
+    asset: ONTOLOGY_DB.DEMO.V_REPORTABLE_INVOICES

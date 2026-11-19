@@ -1,0 +1,31 @@
+# Environment configuration consumed by scripts/deploy.py.
+# Each environment is fully isolated: its own database, service role,
+# consumer role and domain-role prefix, so dev and prod can share an account.
+defaults:
+  WAREHOUSE: COMPUTE_WH
+  PY_RUNTIME: "3.11"
+  DRIFT_CRON: "0 */6 * * *"
+  REQUIRE_DISTINCT_APPROVER: "TRUE"
+
+environments:
+  dev:
+    DB: ONTOLOGY_DB
+    ADMIN_ROLE: ONTOLOGY_ADMIN
+    CONSUMER_ROLE: ONTOLOGY_CONSUMER
+    ROLE_PREFIX: ONT
+    # Dev may run from a single-identity sandbox (one user acts as author and
+    # steward). Prod MUST keep separation of duties on.
+    REQUIRE_DISTINCT_APPROVER: "FALSE"
+    include_sample: true
+    include_agent: true
+
+  prod:
+    DB: ONTOLOGY_PROD
+    ADMIN_ROLE: ONTOLOGY_PROD_ADMIN
+    CONSUMER_ROLE: ONTOLOGY_PROD_CONSUMER
+    ROLE_PREFIX: ONTP
+    DRIFT_CRON: "0 * * * *"
+    # Prod points the agent at your real semantic views; edit deploy/11_agent.sql
+    # (or supply an override file) before enabling.
+    include_sample: false
+    include_agent: false

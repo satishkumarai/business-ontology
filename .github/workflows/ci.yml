@@ -1,0 +1,68 @@
+# CI/CD for the governed Business Ontology.
+#   PR    -> unit tests + render SQL for every environment (no account access)
+#   main  -> deploy dev, seed, integration + agent tests
+#   tag   -> deploy prod (manual approval via the 'production' environment)
+#
+# Secrets: SNOWFLAKE_ACCOUNT, SNOWFLAKE_DEPLOY_USER, SNOWFLAKE_DEPLOY_PRIVATE_KEY
+# (key-pair service user holding ACCOUNTADMIN for step 00, or pass --skip-bootstrap
+# once bootstrap has been applied by a platform admin).
+name: business-ontology
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -r requirements.txt
+      - run: python -m pytest tests/unit -q
+      - run: |
+          python scripts/deploy.py --env dev --dry-run > /dev/null
+          python scripts/deploy.py --env prod --dry-run > /dev/null
+
+  dev:
+    if: github.ref == 'refs/heads/main'
+    needs: unit
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_DEPLOY_USER }}
+      SNOWFLAKE_PRIVATE_KEY_PATH: ${{ runner.temp }}/deploy.p8
+      SNOWFLAKE_WAREHOUSE: COMPUTE_WH
+      ONTOLOGY_ACTOR_MODE: users
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -r requirements.txt
+      - run: echo "${{ secrets.SNOWFLAKE_DEPLOY_PRIVATE_KEY }}" > "$SNOWFLAKE_PRIVATE_KEY_PATH" && chmod 600 "$SNOWFLAKE_PRIVATE_KEY_PATH"
+      - run: python scripts/deploy.py --env dev
+      - run: python scripts/seed_demo.py --env dev
+      - run: python -m pytest tests/integration -v
+      - run: python -m pytest tests/agent -v
+
+  prod:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: unit
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_DEPLOY_USER }}
+      SNOWFLAKE_PRIVATE_KEY_PATH: ${{ runner.temp }}/deploy.p8
+      SNOWFLAKE_WAREHOUSE: COMPUTE_WH
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -r requirements.txt
+      - run: echo "${{ secrets.SNOWFLAKE_DEPLOY_PRIVATE_KEY }}" > "$SNOWFLAKE_PRIVATE_KEY_PATH" && chmod 600 "$SNOWFLAKE_PRIVATE_KEY_PATH"
+      - run: python scripts/deploy.py --env prod

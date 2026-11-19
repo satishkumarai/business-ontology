@@ -1,0 +1,38 @@
+# Sales domain glossary. Sales.Net Revenue intentionally differs from
+# Finance.Net Revenue: both are correct, owned by different stewards.
+domain: Sales
+concepts:
+  - name: Net Revenue
+    kind: METRIC
+    definition: Bookings net of discounts at signing. Reported in the period the contract is signed.
+    synonyms: [net bookings]
+    formula: SUM(list_amount) - SUM(discount_amount)
+    formula_provenance: Sales compensation plan FY26, appendix B
+  - name: Gross Bookings
+    kind: METRIC
+    definition: Total contract value at list price for contracts signed in the period.
+    synonyms: [bookings, TCV at list]
+    formula: SUM(list_amount)
+  - name: Booking
+    kind: ENTITY
+    definition: A signed customer contract committing to a purchase, recorded at signing.
+  - name: Booking Date Policy
+    kind: POLICY
+    definition: Sales metrics are reported by contract signing date.
+
+relationships:
+  - {source: Gross Bookings, type: DERIVES, target: Net Revenue}
+  - {source: Booking Date Policy, type: APPLIES_TO, target: Net Revenue}
+  - {source: Booking Date Policy, type: APPLIES_TO, target: Gross Bookings}
+
+representations:
+  - concept: Net Revenue
+    semantic_view: ONTOLOGY_DB.SEMANTIC.SALES_BOOKINGS_SV
+    metric: BOOKINGS.NET_REVENUE
+  - concept: Gross Bookings
+    semantic_view: ONTOLOGY_DB.SEMANTIC.SALES_BOOKINGS_SV
+    metric: BOOKINGS.GROSS_BOOKINGS
+  - concept: Booking
+    type: IMPLEMENTS
+    asset_kind: TABLE
+    asset: ONTOLOGY_DB.DEMO.BOOKINGS

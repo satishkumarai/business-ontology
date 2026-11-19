@@ -1,0 +1,20 @@
+# External glossary in SKOS (Turtle) - demonstrates RDF import into a nested
+# domain. Import with default_domain => 'Finance.EMEA'.
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix ont:  <urn:snowflake:business-ontology#> .
+@prefix ex:   <https://glossary.example.com/finance/emea/> .
+
+ex:vat a skos:Concept ;
+    skos:prefLabel "VAT" ;
+    skos:altLabel "value added tax" ;
+    skos:definition "Value added tax charged on EMEA invoices and excluded from all revenue metrics." ;
+    ont:kind "TERM" .
+
+ex:emeaNetRevenue a skos:Concept ;
+    skos:prefLabel "EMEA Net Revenue" ;
+    skos:altLabel "net revenue emea" ;
+    skos:definition "Recognized revenue after refunds and discounts for EMEA-billed entities, net of VAT." ;
+    ont:kind "METRIC" ;
+    ont:formula "SUM(invoice_amount_ex_vat) - SUM(refund_amount) - SUM(discount_amount)" .
+
+ex:emeaNetRevenue skos:related ex:vat .

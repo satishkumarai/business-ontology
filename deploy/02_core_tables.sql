@@ -1,0 +1,149 @@
+-- =============================================================================
+-- 02  Core tables (system of record)
+--     Snowflake does not enforce PK/FK/CHECK; integrity is enforced by the
+--     governed procedures, which are the only writers (consumers have no DML).
+--     Constraints are declared for documentation and BI/lineage tooling.
+-- =============================================================================
+USE ROLE {{ADMIN_ROLE}};
+USE SCHEMA {{DB}}.CORE;
+
+CREATE TABLE IF NOT EXISTS DOMAIN (
+  DOMAIN_ID        STRING        NOT NULL PRIMARY KEY,
+  NAME             STRING        NOT NULL,
+  PATH             STRING        NOT NULL UNIQUE COMMENT 'Dotted path, e.g. Finance.Revenue.EMEA',
+  PARENT_DOMAIN_ID STRING        REFERENCES DOMAIN (DOMAIN_ID),
+  DESCRIPTION      STRING,
+  OWNER_ROLE       STRING        COMMENT 'Accountable owner; can grant privileges and drop the domain',
+  STEWARD_ROLE     STRING        COMMENT 'Granted the domain MODIFY role (approver)',
+  CREATED_BY       STRING        NOT NULL,
+  CREATED_AT       TIMESTAMP_LTZ NOT NULL,
+  IS_ACTIVE        BOOLEAN       NOT NULL DEFAULT TRUE
+) CHANGE_TRACKING = TRUE COMMENT = 'Ontology domains (nestable containers with an owner)';
+
+CREATE TABLE IF NOT EXISTS DOMAIN_ACCESS (
+  DOMAIN_ID  STRING  NOT NULL REFERENCES DOMAIN (DOMAIN_ID),
+  PRIVILEGE  STRING  NOT NULL COMMENT 'USAGE | READ | SUGGEST | MODIFY',
+  ROLE_NAME  STRING  NOT NULL,
+  IS_MANAGED BOOLEAN NOT NULL DEFAULT TRUE,
+  PRIMARY KEY (DOMAIN_ID, PRIVILEGE, ROLE_NAME)
+) COMMENT = 'Maps each domain privilege to the Snowflake role that carries it';
+
+CREATE TABLE IF NOT EXISTS DOMAIN_ANCESTOR (
+  DOMAIN_ID   STRING  NOT NULL REFERENCES DOMAIN (DOMAIN_ID),
+  ANCESTOR_ID STRING  NOT NULL REFERENCES DOMAIN (DOMAIN_ID),
+  DEPTH       INTEGER NOT NULL COMMENT '0 = self',
+  PRIMARY KEY (DOMAIN_ID, ANCESTOR_ID)
+) COMMENT = 'Closure table for path-navigation checks';
+
+CREATE TABLE IF NOT EXISTS CONCEPT (
+  CONCEPT_ID         STRING        NOT NULL PRIMARY KEY,
+  DOMAIN_ID          STRING        NOT NULL REFERENCES DOMAIN (DOMAIN_ID),
+  NAME               STRING        NOT NULL,
+  SCOPE              STRING        COMMENT 'Within-domain variant, e.g. product or brand',
+  KIND               STRING        NOT NULL COMMENT 'TERM | METRIC | ENTITY | ACTION | POLICY | DIMENSION | MEASURE',
+  QUALIFIED_NAME     STRING        NOT NULL COMMENT 'Domain.Path.Name [scope]',
+  STATUS             STRING        NOT NULL COMMENT 'DRAFT | APPROVED | REJECTED | MERGED | RETIRED',
+  CURRENT_VERSION_ID STRING        COMMENT 'Approved version served to agents',
+  PENDING_VERSION_ID STRING        COMMENT 'Draft or proposed edit awaiting review',
+  MERGED_INTO        STRING        REFERENCES CONCEPT (CONCEPT_ID),
+  CREATED_BY         STRING        NOT NULL,
+  CREATED_AT         TIMESTAMP_LTZ NOT NULL,
+  UPDATED_AT         TIMESTAMP_LTZ NOT NULL
+) CHANGE_TRACKING = TRUE COMMENT = 'Concept identity; content lives in CONCEPT_VERSION';
+
+CREATE TABLE IF NOT EXISTS CONCEPT_VERSION (
+  VERSION_ID         STRING        NOT NULL PRIMARY KEY,
+  CONCEPT_ID         STRING        NOT NULL REFERENCES CONCEPT (CONCEPT_ID),
+  DOMAIN_ID          STRING        NOT NULL REFERENCES DOMAIN (DOMAIN_ID) COMMENT 'Denormalized for row access policy',
+  VERSION_NO         INTEGER       NOT NULL,
+  STATUS             STRING        NOT NULL COMMENT 'DRAFT | PROPOSED | APPROVED | SUPERSEDED | REJECTED',
+  DEFINITION         STRING        NOT NULL,
+  SYNONYMS           ARRAY,
+  FORMULA            STRING        COMMENT 'Stored as written; never executed. METRIC only.',
+  EXCLUSIONS         ARRAY         COMMENT 'METRIC only',
+  FORMULA_PROVENANCE STRING        COMMENT 'METRIC only',
+  SOURCE             STRING        NOT NULL COMMENT 'MANUAL | IMPORT | SEMANTIC_VIEW_BOOTSTRAP | CORTEX_SENSE',
+  SOURCE_REF         STRING,
+  BASE_VERSION_ID    STRING        COMMENT 'Approved version a PROPOSED edit was based on (stale-edit detection)',
+  CHANGE_NOTE        STRING,
+  AUTHOR             STRING        NOT NULL,
+  CREATED_AT         TIMESTAMP_LTZ NOT NULL,
+  REVIEWED_BY        STRING,
+  REVIEWED_AT        TIMESTAMP_LTZ,
+  REVIEW_NOTE        STRING,
+  UNIQUE (CONCEPT_ID, VERSION_NO)
+) CHANGE_TRACKING = TRUE COMMENT = 'Append-only concept history';
+
+CREATE TABLE IF NOT EXISTS RELATIONSHIP (
+  REL_ID            STRING        NOT NULL PRIMARY KEY,
+  SOURCE_CONCEPT_ID STRING        NOT NULL REFERENCES CONCEPT (CONCEPT_ID),
+  TARGET_CONCEPT_ID STRING        NOT NULL REFERENCES CONCEPT (CONCEPT_ID),
+  REL_TYPE          STRING        NOT NULL COMMENT 'IS_A | HAS_PART | DERIVES | MEASURES | APPLIES_TO | EQUIVALENT_TO | RELATED_TO | CUSTOM',
+  CUSTOM_LABEL      STRING        COMMENT 'Required iff REL_TYPE = CUSTOM',
+  DOMAIN_ID         STRING        NOT NULL COMMENT 'Governing domain = source concept domain',
+  STATUS            STRING        NOT NULL COMMENT 'DRAFT | APPROVED | REJECTED | RETIRED',
+  NOTE              STRING,
+  CREATED_BY        STRING        NOT NULL,
+  CREATED_AT        TIMESTAMP_LTZ NOT NULL,
+  APPROVED_BY       STRING,
+  APPROVED_AT       TIMESTAMP_LTZ,
+  REVIEW_NOTE       STRING
+) CHANGE_TRACKING = TRUE COMMENT = 'Directed, typed concept edges';
+
+CREATE TABLE IF NOT EXISTS REPRESENTATION (
+  REP_ID            STRING        NOT NULL PRIMARY KEY,
+  CONCEPT_ID        STRING        NOT NULL REFERENCES CONCEPT (CONCEPT_ID),
+  DOMAIN_ID         STRING        NOT NULL,
+  REP_TYPE          STRING        NOT NULL COMMENT 'IMPLEMENTS | DESCRIBES | RELATED_DASHBOARD',
+  ASSET_KIND        STRING        NOT NULL COMMENT 'TABLE | VIEW | COLUMN | SEMANTIC_VIEW | SV_DIMENSION | SV_FACT | SV_METRIC | BI_ASSET',
+  ASSET_FQN         STRING        NOT NULL,
+  ASSET_MEMBER      STRING        COMMENT 'Column or semantic-view member, e.g. INVOICES.NET_REVENUE',
+  STATUS            STRING        NOT NULL COMMENT 'DRAFT | APPROVED | REJECTED | RETIRED',
+  LAST_SNAPSHOT     VARIANT       COMMENT 'Baseline snapshot of the asset (expression, comment, schema)',
+  ASSET_FINGERPRINT STRING,
+  VALIDATION_STATUS STRING        COMMENT 'VALID | DRIFTED | MISSING',
+  LAST_VALIDATED_AT TIMESTAMP_LTZ,
+  NOTE              STRING,
+  CREATED_BY        STRING        NOT NULL,
+  CREATED_AT        TIMESTAMP_LTZ NOT NULL,
+  APPROVED_BY       STRING,
+  APPROVED_AT       TIMESTAMP_LTZ,
+  REVIEW_NOTE       STRING
+) CHANGE_TRACKING = TRUE COMMENT = 'Pointers from concepts to implementing/describing assets (never executed)';
+
+CREATE TABLE IF NOT EXISTS DRIFT_FINDING (
+  FINDING_ID      STRING        NOT NULL PRIMARY KEY,
+  REP_ID          STRING        NOT NULL REFERENCES REPRESENTATION (REP_ID),
+  CONCEPT_ID      STRING        NOT NULL,
+  DOMAIN_ID       STRING        NOT NULL,
+  FINDING_TYPE    STRING        NOT NULL COMMENT 'ASSET_MISSING | FORMULA_CHANGED | DESCRIPTION_CHANGED | SCHEMA_CHANGED | TYPE_CHANGED',
+  BASELINE        VARIANT,
+  OBSERVED        VARIANT,
+  DETECTED_AT     TIMESTAMP_LTZ NOT NULL,
+  RESOLVED_AT     TIMESTAMP_LTZ,
+  RESOLVED_BY     STRING,
+  RESOLUTION      STRING        COMMENT 'ACCEPT | RETIRE_LINK',
+  RESOLUTION_NOTE STRING
+) COMMENT = 'Representation drift awaiting steward review';
+
+CREATE TABLE IF NOT EXISTS IMPORT_BATCH (
+  BATCH_ID     STRING        NOT NULL PRIMARY KEY,
+  STAGE_PATH   STRING        NOT NULL,
+  FORMAT       STRING        NOT NULL,
+  SUBMITTED_BY STRING        NOT NULL,
+  SUBMITTED_AT TIMESTAMP_LTZ NOT NULL,
+  DRY_RUN      BOOLEAN       NOT NULL,
+  STATS        VARIANT,
+  ERRORS       VARIANT
+) COMMENT = 'Glossary import runs';
+
+CREATE TABLE IF NOT EXISTS AUDIT_EVENT (
+  EVENT_ID    STRING        NOT NULL PRIMARY KEY,
+  EVENT_TS    TIMESTAMP_LTZ NOT NULL,
+  ACTOR_USER  STRING        NOT NULL,
+  ACTION      STRING        NOT NULL,
+  ENTITY_TYPE STRING        NOT NULL,
+  ENTITY_ID   STRING,
+  DOMAIN_ID   STRING,
+  DETAILS     VARIANT
+) COMMENT = 'Immutable audit trail of every governed change';
